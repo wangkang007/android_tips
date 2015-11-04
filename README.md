@@ -421,4 +421,201 @@
 
 ###4.android studio使用技巧
 &ensp;&ensp;&ensp;&ensp;1. 检查无用的资源，在项目中点击右键，在出现的右键菜单中有“Analyze” --> “run inspaction by Name ...”。在弹出的搜索窗口中输入想执行的检查类型，如“Unused Resources”
+###5.防止EditText自动获取焦点并且弹出输入法
+&ensp;&ensp;&ensp;&ensp;方案1 ``android:windowSoftInputMode="adjustUnspecified|stateHidden"`` 通过这段代码设置关闭
+
+	   <activity  android:name="指定Activity"
+			      android:label="@string/app_name"
+			      android:windowSoftInputMode="adjustUnspecified|stateHidden"
+			      android:configChanges="orientation|keyboardHidden">
+	  		<intent-filter>
+	  			<action android:name="android.intent.action.MAIN" />
+	  			<category android:name="android.intent.category.LAUNCHER" />
+	  		</intent-filter>
+	  < /activity>
+&ensp;&ensp;&ensp;&ensp;方案二:
+
+	EditText edit=(EditText)findViewById(R.id.edit);
+    InputMethodManager imm = (InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
+    imm.hideSoftInputFromWindow(edit.getWindowToken(),0);
 ##android兼容性bug
+###1.避免快捷方式创建bug，一般创建快捷方式代码如下所述：
+
+	 private void addShortcut(String name) {
+        Intent addShortcutIntent = new Intent(ACTION_ADD_SHORTCUT);
+
+        // 不允许重复创建
+        addShortcutIntent.putExtra("duplicate", false);
+     
+
+        // 名字
+        addShortcutIntent.putExtra(Intent.EXTRA_SHORTCUT_NAME, name);
+
+        // 图标
+        addShortcutIntent.putExtra(Intent.EXTRA_SHORTCUT_ICON_RESOURCE,
+                Intent.ShortcutIconResource.fromContext(MainActivity.this,
+                        R.drawable.ic_launcher));
+
+        // 设置关联程序
+        Intent launcherIntent = new Intent(Intent.ACTION_MAIN);
+        launcherIntent.setClass(MainActivity.this, MainActivity.class);
+        launcherIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+
+        addShortcutIntent
+                .putExtra(Intent.EXTRA_SHORTCUT_INTENT, launcherIntent);
+
+        // 发送广播
+        sendBroadcast(addShortcutIntent);
+    }
+经过测试这段代码是存在问题的``addShortcutIntent.putExtra("duplicate", false);`` 这个代码在一些机型上面是没有效果的。所以只能选择其他方案：
+
+ 	private boolean hasInstallShortcut(String name) {
+
+        boolean hasInstall = false;
+
+        final String AUTHORITY = "com.android.launcher2.settings";
+        Uri CONTENT_URI = Uri.parse("content://" + AUTHORITY
+                + "/favorites?notify=true");
+
+        // 这里总是failed to find provider info
+        // com.android.launcher2.settings和com.android.launcher.settings都不行
+        Cursor cursor = this.getContentResolver().query(CONTENT_URI,
+                new String[] { "title", "iconResource" }, "title=?",
+                new String[] { name }, null);
+
+        if (cursor != null && cursor.getCount() > 0) {
+            hasInstall = true;
+        }
+
+        return hasInstall;
+
+    }
+在创建之前首先判断下数据库里面是否存在了
+
+###2.相机调用
+
+
+ 	/**
+     * 专为Android4.4设计的从Uri获取文件绝对路径，以前的方法已不好使
+     */
+    @SuppressLint("NewApi")
+    public static String getPath(final Context context, final Uri uri) {
+ 
+        final boolean isKitKat = Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT;
+ 
+        // DocumentProvider
+        if (isKitKat && DocumentsContract.isDocumentUri(context, uri)) {
+            // ExternalStorageProvider
+            if (isExternalStorageDocument(uri)) {
+                final String docId = DocumentsContract.getDocumentId(uri);
+                final String[] split = docId.split(":");
+                final String type = split[0];
+ 
+                if ("primary".equalsIgnoreCase(type)) {
+                    return Environment.getExternalStorageDirectory() + "/" + split[1];
+                }
+ 
+                // TODO handle non-primary volumes
+            }
+            // DownloadsProvider
+            else if (isDownloadsDocument(uri)) {
+ 
+                final String id = DocumentsContract.getDocumentId(uri);
+                final Uri contentUri = ContentUris.withAppendedId(
+                        Uri.parse("content://downloads/public_downloads"), Long.valueOf(id));
+ 
+                return getDataColumn(context, contentUri, null, null);
+            }
+            // MediaProvider
+            else if (isMediaDocument(uri)) {
+                final String docId = DocumentsContract.getDocumentId(uri);
+                final String[] split = docId.split(":");
+                final String type = split[0];
+ 
+                Uri contentUri = null;
+                if ("image".equals(type)) {
+                    contentUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+                } else if ("video".equals(type)) {
+                    contentUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+                } else if ("audio".equals(type)) {
+                    contentUri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
+                }
+ 
+                final String selection = "_id=?";
+                final String[] selectionArgs = new String[] { split[1] };
+ 
+                return getDataColumn(context, contentUri, selection, selectionArgs);
+            }
+        }
+        // MediaStore (and general)
+        else if ("content".equalsIgnoreCase(uri.getScheme())) {
+            return getDataColumn(context, uri, null, null);
+        }
+        // File
+        else if ("file".equalsIgnoreCase(uri.getScheme())) {
+            return uri.getPath();
+        }
+ 
+        return null;
+    }
+  	/**
+     * Get the value of the data column for this Uri. This is useful for
+     * MediaStore Uris, and other file-based ContentProviders.
+     * 
+     * @param context
+     *            The context.
+     * @param uri
+     *            The Uri to query.
+     * @param selection
+     *            (Optional) Filter used in the query.
+     * @param selectionArgs
+     *            (Optional) Selection arguments used in the query.
+     * @return The value of the _data column, which is typically a file path.
+     */
+    public static String getDataColumn(Context context, Uri uri, String selection,
+            String[] selectionArgs) {
+ 
+        Cursor cursor = null;
+        final String column = "_data";
+        final String[] projection = { column };
+ 
+        try {
+            cursor = context.getContentResolver().query(uri, projection, selection, selectionArgs,
+                    null);
+            if (cursor != null && cursor.moveToFirst()) {
+                final int column_index = cursor.getColumnIndexOrThrow(column);
+                return cursor.getString(column_index);
+            }
+        } finally {
+            if (cursor != null)
+                cursor.close();
+        }
+        return null;
+    }
+ 
+    /**
+     * @param uri
+     *            The Uri to check.
+     * @return Whether the Uri authority is ExternalStorageProvider.
+     */
+    public static boolean isExternalStorageDocument(Uri uri) {
+        return "com.android.externalstorage.documents".equals(uri.getAuthority());
+    }
+ 
+    /**
+     * @param uri
+     *            The Uri to check.
+     * @return Whether the Uri authority is DownloadsProvider.
+     */
+    public static boolean isDownloadsDocument(Uri uri) {
+        return "com.android.providers.downloads.documents".equals(uri.getAuthority());
+    }
+ 
+    /**
+     * @param uri
+     *            The Uri to check.
+     * @return Whether the Uri authority is MediaProvider.
+     */
+    public static boolean isMediaDocument(Uri uri) {
+        return "com.android.providers.media.documents".equals(uri.getAuthority());
+    }
